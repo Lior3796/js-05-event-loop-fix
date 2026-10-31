@@ -17,7 +17,8 @@ function sourceOf(file) {
 
 // Loads index.html + helpers.js + one exercise file into a fake browser (jsdom), calls run()
 // like typing run() in the Console, waits for every setTimeout to finish and returns what happened.
-async function runExercise(file) {
+// setup(window), if given, runs after the file is loaded and before run() (e.g. to replace a given function).
+async function runExercise(file, setup) {
   assert.doesNotMatch(sourceOf(file), /\bPromise\b|\basync\b|\bawait\b|queueMicrotask|\.then\s*\(/, "Promise, async/await and .then are not allowed in this assignment - use setTimeout and the order of the lines");
   const lastLine = read(file).trim().split(/\r?\n/).pop().trim();
   assert.equal(lastLine, EXPORT_LINE, `don't change the last line of ${file}: ${EXPORT_LINE}`);
@@ -34,6 +35,7 @@ async function runExercise(file) {
   const logs = []; // everything printed with console.log, one string per call
   const timers = []; // every setTimeout call: { delay, phase }
   const lines = []; // every addLine call: { text, delay } (delay = of the timer that called it, null = not in a timer)
+  const messages = []; // every setMessage call, in order
   let phase = "load";
   let pending = 0;
   let currentDelay = null;
@@ -60,10 +62,14 @@ async function runExercise(file) {
   };
 
   window.eval(read("helpers.js"));
-  const { addLine } = window;
+  const { addLine, setMessage } = window;
   window.addLine = (text) => {
     lines.push({ text: String(text), delay: currentDelay });
     addLine(text);
+  };
+  window.setMessage = (text) => {
+    messages.push(String(text));
+    setMessage(text);
   };
 
   window.module = { exports: {} };
@@ -79,6 +85,7 @@ async function runExercise(file) {
   const run = window.module.exports.run ?? window.run;
   assert.equal(typeof run, "function", `${file} should still have the function run and the module.exports line at the end`);
 
+  if (setup) setup(window);
   phase = "run";
   try {
     run();
@@ -99,6 +106,7 @@ async function runExercise(file) {
     loadTimers,
     timers,
     lines,
+    messages,
     listItems: [...document.querySelectorAll("#log li")].map((li) => li.textContent.trim()),
     message: document.getElementById("message").textContent.trim(),
   };
@@ -112,23 +120,9 @@ function checkRules(file, result) {
   assert.ok(!tooLong, `no delay may be more than ${MAX_DELAY} ms (found setTimeout with ${tooLong?.delay})`);
 }
 
-// Checks the comment that explains why the original code printed in the wrong order.
-function checkExplanation(file) {
-  const text = read(file);
-  const start = text.search(/function\s+run\b/);
-  const head = start === -1 ? text : text.slice(0, start);
-  const comments = [...head.matchAll(/\/\*([\s\S]*?)\*\/|\/\/(.*)$/gm)]
-    .map((match) => (match[1] ?? match[2]).replace(/\bex\d\.js\b/g, "").trim())
-    .join(" ");
-  assert.ok(
-    comments.replace(/\s/g, "").length >= 15,
-    `add a comment at the top of ${file} (above function run) that explains in a sentence or two why the original code printed in the wrong order`
-  );
-  assert.match(
-    comments,
-    /stack|queue|loop|מחסנית|תור|לולא/i,
-    "explain it in terms of the call stack, the callback queue and the event loop - mention at least one of them in the comment"
-  );
+// The file's code with all whitespace squeezed to single spaces (to check that given lines were kept).
+function codeOf(file) {
+  return sourceOf(file).replace(/\s+/g, " ");
 }
 
-module.exports = { runExercise, checkRules, checkExplanation, sourceOf };
+module.exports = { runExercise, checkRules, sourceOf, codeOf };
